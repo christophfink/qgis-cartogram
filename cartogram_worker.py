@@ -6,6 +6,9 @@ from cartogram_feature import CartogramFeature
 import math
 import traceback
 
+import multiprocessing
+import Queue
+
 
 class CartogramWorker(QObject):
     """Background worker which actually creates the cartogram."""
@@ -43,16 +46,34 @@ class CartogramWorker(QObject):
                     force_reduction_factor) = self.get_reduction_factor(
                     self.layer, self.field_name)
 
+                inQueue=multiprocessing.Queue()
+                outQueue=multiprocessing.Queue()
+
                 for feature in self.layer.getFeatures():
                     if self.exit_code > 0:
                         break
 
                     old_geometry = feature.geometry()
-                    new_geometry = self.transform(meta_features,
-                        force_reduction_factor, old_geometry)
+                    #new_geometry = self.transform(meta_features, force_reduction_factor, old_geometry)
+
+                    inQueue.put((feature.id(),old_geometry.exportToWkt()))
+
+                threads=[]
+                for i in range(multiprocessing.cpu_count()+1):
+                    p=multiprocessing.Process(target=self.transform,args=(meta_features,force_reduction_factor,inQueue,outQueue))
+                    p.start()
+                    threads.append(p)
+
+                while True:
+                    try:
+                        (featureId,new_geometry)=outQueue.get(True,10)
+                    except Queue.Empty:
+                        break
+
+                    new_geometry=QgsGeometry().fromWkt(new_geometry)
 
                     self.layer.dataProvider().changeGeometryValues({
-                        feature.id() : new_geometry})
+                        featureId : new_geometry})
 
                     steps += 1
                     if step == 0 or steps % step == 0:
@@ -138,21 +159,31 @@ class CartogramWorker(QObject):
 
         return (meta_features, force_reduction_factor)
 
-    def transform(self, meta_features, force_reduction_factor, geometry):
+    def transform(self, meta_features, force_reduction_factor, inQueue, outQueue):
         """Transform the geometry based on the force reduction factor."""
 
-        if geometry.isMultipart():
-            geometries = []
-            for polygon in geometry.asMultiPolygon():
+        while True:
+            try:
+                (featureId,geometry)=inQueue.get()
+            except Queue.Empty:
+                break
+
+            geometry=QgsGeometry().fromWkt(geometry)
+
+            if geometry.isMultipart():
+                geometries = []
+                for polygon in geometry.asMultiPolygon():
+                    new_polygon = self.transform_polygon(polygon, meta_features,
+                        force_reduction_factor)
+                    geometries.append(new_polygon)
+                returnValue = QgsGeometry.fromMultiPolygon(geometries)
+            else:
+                polygon = geometry.asPolygon()
                 new_polygon = self.transform_polygon(polygon, meta_features,
                     force_reduction_factor)
-                geometries.append(new_polygon)
-            return QgsGeometry.fromMultiPolygon(geometries)
-        else:
-            polygon = geometry.asPolygon()
-            new_polygon = self.transform_polygon(polygon, meta_features,
-                force_reduction_factor)
-            return QgsGeometry.fromPolygon(new_polygon)
+                returnValue = QgsGeometry.fromPolygon(new_polygon)
+
+            outQueue.put((featureId,returnValue.exportToWkt()))
 
     def transform_polygon(self, polygon, meta_features,
         force_reduction_factor):
