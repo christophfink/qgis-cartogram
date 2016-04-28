@@ -1,5 +1,5 @@
-from PyQt4.QtCore import pyqtSignal, QObject
-from qgis.core import QgsDistanceArea, QgsGeometry, QgsMessageLog, QgsPoint
+from PyQt4.QtCore import pyqtSignal, QObject, QPyNullVariant
+from qgis.core import QgsDistanceArea, QgsGeometry, QgsPoint
 
 from cartogram_feature import CartogramFeature
 
@@ -10,7 +10,7 @@ import traceback
 class CartogramWorker(QObject):
     """Background worker which actually creates the cartogram."""
 
-    finished = pyqtSignal(object)
+    finished = pyqtSignal(object, int)
     error = pyqtSignal(Exception, basestring)
     progress = pyqtSignal(float)
 
@@ -22,7 +22,12 @@ class CartogramWorker(QObject):
         self.field_name = field_name
         self.iterations = iterations
 
-        self.killed = False
+        # used to store the computed minimum value when the input data contains
+        # zero or null values in the column used to create the cartogram
+        self.min_value = None
+
+        # set default exit code - if this doesn't change everything went well
+        self.exit_code = -1
 
     def run(self):
         ret = None
@@ -39,7 +44,7 @@ class CartogramWorker(QObject):
                     self.layer, self.field_name)
 
                 for feature in self.layer.getFeatures():
-                    if self.killed is True:
+                    if self.exit_code > 0:
                         break
 
                     old_geometry = feature.geometry()
@@ -53,16 +58,16 @@ class CartogramWorker(QObject):
                     if step == 0 or steps % step == 0:
                         self.progress.emit(steps / float(feature_count) * 100)
 
-            if self.killed is False:
+            if self.exit_code == -1:
                 self.progress.emit(100)
                 ret = self.layer
         except Exception, e:
             self.error.emit(e, traceback.format_exc())
 
-        self.finished.emit(ret)
+        self.finished.emit(ret, self.exit_code)
 
     def kill(self):
-        self.killed = True
+        self.exit_code = 1
 
     def get_reduction_factor(self, layer, field):
         """Calculate the reduction factor."""
@@ -71,6 +76,9 @@ class CartogramWorker(QObject):
 
         total_area = 0.0
         total_value = 0.0
+
+        if self.min_value is None:
+            self.min_value = self.get_min_value(data_provider, field)
 
         for feature in data_provider.getFeatures():
             meta_feature = CartogramFeature()
@@ -81,6 +89,9 @@ class CartogramWorker(QObject):
             total_area += area
 
             feature_value = feature.attribute(field)
+            if type(feature_value) is QPyNullVariant or feature_value == 0:
+                feature_value = self.min_value / 100
+
             total_value += feature_value
 
             meta_feature.area = area
@@ -194,3 +205,13 @@ class CartogramWorker(QObject):
             step = 2
 
         return step
+
+    def get_min_value(self, data_provider, field):
+        features = []
+        for feature in data_provider.getFeatures():
+            feature_value = feature.attribute(field)
+            if not type(feature_value) is QPyNullVariant \
+                and feature_value != 0:
+                features.append(feature.attribute(field))
+
+        return min(features)
