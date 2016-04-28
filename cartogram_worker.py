@@ -1,12 +1,10 @@
 from PyQt4.QtCore import pyqtSignal, QObject, QPyNullVariant
-from qgis.core import QgsDistanceArea, QgsGeometry, QgsPoint, QgsFeature
+from qgis.core import QgsDistanceArea, QgsGeometry, QgsPoint
 
 from cartogram_feature import CartogramFeature
 
 import math
 import traceback
-import multiprocessing
-import Queue
 
 
 class CartogramWorker(QObject):
@@ -74,7 +72,7 @@ class CartogramWorker(QObject):
     def get_reduction_factor(self, layer, field):
         """Calculate the reduction factor."""
         data_provider = layer.dataProvider()
-        #meta_features = []
+        meta_features = []
 
         total_area = 0.0
         total_value = 0.0
@@ -82,120 +80,58 @@ class CartogramWorker(QObject):
         if self.min_value is None:
             self.min_value = self.get_min_value(data_provider, field)
 
-        def forFeatureInDataproviderGetFeatures(inQueue,outQueue):
-            while True:
-                try:
-                    feature=inQueue.get()
-                except Queue.Empty:
-                    break
-
-                meta_feature = CartogramFeature()
-    
-                feature=QgsFeature(feature)
-                geometry = QgsGeometry(feature.geometry())
-    
-                area = QgsDistanceArea().measure(geometry)
-                total_area += area
-    
-                feature_value = feature.attribute(field)
-                if type(feature_value) is QPyNullVariant or feature_value == 0:
-                    feature_value = self.min_value / 100
-    
-                total_value += feature_value
-    
-                meta_feature.area = area
-                meta_feature.value = feature_value
-    
-                centroid = geometry.centroid()
-                (cx, cy) = centroid.asPoint().x(), centroid.asPoint().y()
-                meta_feature.center_x = cx
-                meta_feature.center_y = cy
-
-                outQueue.put(meta_feature)
-
-        def outputCollector(outQueue):
-            meta_features = []
-            while True:
-                try:
-                    feature=outQueue.get(True,120)
-                except Queue.Empty:
-                    break
-
-                meta_features.append(meta_feature)
-
-            return meta_features
-
-        inQueue=multiprocessing.Queue()
-        outQueue=multiprocessing.Queue()
         for feature in data_provider.getFeatures():
-            inQueue.put(feature)
+            meta_feature = CartogramFeature()
 
-        threads=[]
-        for i in range(multiprocessing.cpu_count()+1):
-            p=multiprocessing.Process(target=forFeatureInDataproviderGetFeatures,args=(inQueue,outQueue))
-            p.start()
-            threads.append(p)
+            geometry = QgsGeometry(feature.geometry())
 
-        for t in threads:
-            t.join()
+            area = QgsDistanceArea().measure(geometry)
+            total_area += area
 
-        meta_features = []
-        while True:
-            try:
-                feature=outQueue.get()
-            except Queue.Empty:
-                break
+            feature_value = feature.attribute(field)
+            if type(feature_value) is QPyNullVariant or feature_value == 0:
+                feature_value = self.min_value / 100
+
+            total_value += feature_value
+
+            meta_feature.area = area
+            meta_feature.value = feature_value
+
+            centroid = geometry.centroid()
+            (cx, cy) = centroid.asPoint().x(), centroid.asPoint().y()
+            meta_feature.center_x = cx
+            meta_feature.center_y = cy
+
             meta_features.append(meta_feature)
 
         fraction = total_area / total_value
 
-        def forMetaFeatureInMetaFeatures(inQueue,outQueue,fraction):
-            while True:
-                try:
-                    feature=inQueue.get()
-                except Queue.Empty:
-                    break
+        total_size_error = 0
 
-                    polygon_value = meta_feature.value
-                    polygon_area = meta_feature.area
-        
-                    if polygon_area < 0:
-                        polygon_area = 0
-        
-                    # this is our 'desired' area...
-                    desired_area = polygon_value * fraction
-        
-                    # calculate radius, a zero area is zero radius
-                    radius = math.sqrt(polygon_area / math.pi)
-                    meta_feature.radius = radius
-        
-                    if desired_area / math.pi > 0:
-                        mass = math.sqrt(desired_area / math.pi) - radius
-                        meta_feature.mass = mass
-                    else:
-                        meta_feature.mass = 0
-        
-                    size_error = max(polygon_area, desired_area) / \
-                        min(polygon_area, desired_area)
+        for meta_feature in meta_features:
+            polygon_value = meta_feature.value
+            polygon_area = meta_feature.area
 
-                    outQueue.put(size_error)
+            if polygon_area < 0:
+                polygon_area = 0
 
-            threads=[]
-            for i in range(multiprocessing.cpu_count()+1):
-                p=multiprocessing.Process(target=forMetaFeatureInMetaFeatures,args=(inQueue,outQueue,fraction))
-                p.start()
-                threads.append(p)
+            # this is our 'desired' area...
+            desired_area = polygon_value * fraction
 
-            for t in threads:
-                t.join()
+            # calculate radius, a zero area is zero radius
+            radius = math.sqrt(polygon_area / math.pi)
+            meta_feature.radius = radius
 
-            total_size_error=0
-            while True:
-                try:
-                    size_error=outQueue.get()
-                except Queue.Empty:
-                    break
-                total_size_error += size_error
+            if desired_area / math.pi > 0:
+                mass = math.sqrt(desired_area / math.pi) - radius
+                meta_feature.mass = mass
+            else:
+                meta_feature.mass = 0
+
+            size_error = max(polygon_area, desired_area) / \
+                min(polygon_area, desired_area)
+
+            total_size_error += size_error
 
         average_error = total_size_error / len(meta_features)
         force_reduction_factor = 1 / (average_error + 1)
