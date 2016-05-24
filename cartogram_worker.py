@@ -1,5 +1,5 @@
 from PyQt4.QtCore import pyqtSignal, QObject, QPyNullVariant
-from qgis.core import QgsDistanceArea, QgsGeometry, QgsPoint
+from qgis.core import QgsDistanceArea, QgsGeometry, QgsPoint, QgsVectorFileWriter
 
 from cartogram_feature import CartogramFeature
 
@@ -24,6 +24,8 @@ class CartogramWorker(QObject):
         self.layer = layer
         self.field_name = field_name
         self.iterations = iterations
+
+        self.intermediateLayers = []
 
         # used to store the computed minimum value when the input data contains
         # zero or null values in the column used to create the cartogram
@@ -66,7 +68,7 @@ class CartogramWorker(QObject):
 
                 while True:
                     try:
-                        (featureId,new_geometry)=outQueue.get(True,10)
+                        (featureId,new_geometry)=outQueue.get(True,1)
                     except Queue.Empty:
                         break
 
@@ -79,6 +81,37 @@ class CartogramWorker(QObject):
                     if step == 0 or steps % step == 0:
                         self.progress.emit(steps / float(feature_count) * 100)
 
+#                intermediateLayer = QgsVectorLayer(
+#                    "{geomType}?crs={crsId}".format(geomType=QGis.vectorGeometryType(self.layer.geometryType()),crsId=layer.crs().authid()),
+#                    "intermediate layer #{}".format(step),
+#                    "memory"
+#                )
+#                intermediateLayer.startEditing()
+#                intermediateLayer.dataProvider().addAttributes(
+#                    self.layer.dataprovider().fields().toList()
+#                )
+#                intermediateLayer.commitChanges()
+#
+#                for feature in self.layer.dataProvider().getFeatures():
+#                    intermediateLayer.dataProvider().addFeatures([feature])
+#                intermediateLayer.commitChanges()
+#
+#                self.intermediateLayers.append(intermediateLayer)
+
+#                writer = QgsVectorFileWriter(
+#                    "/tmp/intermediateLayer{}".format(step),
+#                    "utf-8",
+#                    self.layer.dataProvider().fields(),
+#                    self.layer.wkbType(),
+#                    self.layer.crs(),
+#                    "GeoJSON",
+#                    layerOptions=["COORDINATE_PRECISION=1"]
+#                )
+#                for f in self.layer.getFeatures():
+#                    writer.addFeature(f)
+#                del writer
+        
+        
             if self.exit_code == -1:
                 self.progress.emit(100)
                 ret = self.layer
@@ -164,7 +197,7 @@ class CartogramWorker(QObject):
 
         while True:
             try:
-                (featureId,geometry)=inQueue.get()
+                (featureId,geometry)=inQueue.get(False)
             except Queue.Empty:
                 break
 

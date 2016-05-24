@@ -18,6 +18,8 @@ import resources_rc
 class Cartogram:
     """QGIS Plugin Implementation."""
 
+    workers=[]
+
     def __init__(self, iface):
         """Constructor.
 
@@ -118,10 +120,26 @@ class Cartogram:
         input_field = self.dialog.sourceFieldCombo.currentText()
         iterations = self.dialog.iterationsSpinBox.value()
 
-        memory_layer = self.create_memory_layer(input_layer)
-        memory_layer_data_provider = memory_layer.dataProvider()
+        anim_fields = [f.name() for f in input_layer.fields().toList() if f.name()[:4]=="anim"]
+        if len(anim_fields)>1 and input_field[:4]=="anim":
+            for anim_field in anim_fields:
+                memory_layer = self.create_memory_layer(input_layer,anim_field)
+                self.workers.append({
+                    "layer":memory_layer,
+                    "fieldName":anim_field,
+                    "iterations":iterations
+                })
+            firstWorker=self.workers.pop()
+            self.worker_start(
+                firstWorker["layer"],
+                firstWorker["fieldName"],
+                firstWorker["iterations"]
+            )
+            
+        else:
+            memory_layer = self.create_memory_layer(input_layer,input_field)
+            self.worker_start(memory_layer, input_field, iterations)
 
-        self.worker_start(memory_layer, input_field, iterations)
 
     def demo(self):
         path = os.path.join(self.plugin_dir, 'demo', 'demo.shp')
@@ -180,6 +198,9 @@ class Cartogram:
 
         self.iface.messageBar().popWidget(self.message_bar)
 
+        #for intermediateLayer in intermediateLayers:
+        #    QgsMapLayerRegistry.instance().addMapLayer(intermediateLayers)
+
         if layer is not None:
             QgsMapLayerRegistry.instance().addMapLayer(layer)
         else:
@@ -187,6 +208,14 @@ class Cartogram:
                 message = self.tr('Cartogram creation cancelled by user.')
                 self.iface.messageBar().pushMessage(message,
                     level=QgsMessageBar.INFO, duration=3)
+
+        if len(self.workers) > 0:
+            worker=self.workers.pop()
+            self.worker_start(
+                worker["layer"],
+                worker["fieldName"],
+                worker["iterations"]
+            )
 
     def worker_error(self, e, exception_string):
         message = self.tr('An error ocurred during cartogram creation. '
@@ -217,7 +246,7 @@ class Cartogram:
             # loop through the input data to make sure no rows contain zero or
             # null values
             zero_null = None
-            for feature in layer.dataProvider().getFeatures():
+            for feature in layer.getFeatures():
                 feature_value = feature.attribute(field)
                 if type(feature_value) is QPyNullVariant or feature_value == 0:
                     zero_null = 1
@@ -266,7 +295,7 @@ class Cartogram:
 
         return count
 
-    def create_memory_layer(self, layer):
+    def create_memory_layer(self, layer, inputField):
         """Create an in-memory copy of an existing vector layer."""
 
         data_provider = layer.dataProvider()
@@ -277,17 +306,17 @@ class Cartogram:
         path = geometry_type + '?crs=' + crs_id + '&index=yes'
 
         # create the memory layer and get a reference to the data provider
-        memory_layer = QgsVectorLayer(path, 'Cartogram', 'memory')
+        memory_layer = QgsVectorLayer(path, 'Cartogram_{}'.format(inputField), 'memory')
         memory_layer_data_provider = memory_layer.dataProvider()
 
         # copy all attributes from the source layer to the memory layer
         memory_layer.startEditing()
         memory_layer_data_provider.addAttributes(
-            data_provider.fields().toList())
+            layer.fields().toList())
         memory_layer.commitChanges()
 
         # copy all features from the source layer to the memory layer
-        for feature in data_provider.getFeatures():
+        for feature in layer.getFeatures():
             memory_layer_data_provider.addFeatures([feature])
 
         return memory_layer
