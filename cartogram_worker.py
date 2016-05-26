@@ -1,3 +1,6 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
 from PyQt4.QtCore import pyqtSignal, QObject, QPyNullVariant
 from qgis.core import QgsDistanceArea, QgsGeometry, QgsPoint, QgsVectorFileWriter
 
@@ -16,6 +19,9 @@ class CartogramWorker(QObject):
     finished = pyqtSignal(object, int)
     error = pyqtSignal(Exception, basestring)
     progress = pyqtSignal(float)
+    feedback = pyqtSignal(unicode)
+
+    forces=[]
 
     def __init__(self, layer, field_name, iterations):
         """Constructor."""
@@ -44,6 +50,7 @@ class CartogramWorker(QObject):
             steps = 0
 
             for i in range(self.iterations):
+                self.feedback.emit("starting iteration {} of {}".format(i+1,self.iterations))
                 (meta_features,
                     force_reduction_factor) = self.get_reduction_factor(
                     self.layer, self.field_name)
@@ -68,7 +75,7 @@ class CartogramWorker(QObject):
 
                 while True:
                     try:
-                        (featureId,new_geometry)=outQueue.get(True,1)
+                        (featureId,new_geometry)=outQueue.get(True,20)
                     except Queue.Empty:
                         break
 
@@ -225,16 +232,26 @@ class CartogramWorker(QObject):
         new_line = []
         new_polygon = []
 
+        whitelist=[] # list of centroids we got actual correction factors from for the first point of the polygon. let’s assume if we get <0.0 change, it is not going to influence ANY of the polygons points
+
         for line in polygon:
             for point in line:
                 x = x0 = point.x()
                 y = y0 = point.y()
 
+                if len(whitelist)==0:
+                    featureList=meta_features
+                else:
+                    featureList=whitelist
                 # compute the influence of all shapes on this point
-                for feature in meta_features:
+                for feature in featureList:
+                    if feature.mass == 0:
+                        continue 
                     cx = feature.center_x
                     cy = feature.center_y
-                    distance = math.sqrt((x0 - cx) ** 2 + (y0 - cy) ** 2)
+                    dX=x0-cx
+                    dY=y0-cy
+                    distance = math.sqrt(dX ** 2 + dY ** 2)
 
                     if (distance > feature.radius):
                         # calculate the force exerted on points far away from
@@ -247,8 +264,12 @@ class CartogramWorker(QObject):
                         # distance ** 2 / feature.radius ** 2 instead of xF
                         force = feature.mass * (xF ** 2) * (4 - (3 * xF))
                     force = force * force_reduction_factor / distance
-                    x = (x0 - cx) * force + x
-                    y = (y0 - cy) * force + y
+                    corrX=dX*force
+                    corrY=dY*force
+                    if sqrt(corrX**2 + corrY**2) > 0.1: # HUOM! that is assuming we’re dealing with meters here! does NOT work with geographic crs!
+                        x += corrX
+                        y += corrY
+                        whitelist.append(feature)
                 new_line.append(QgsPoint(x, y))
             new_polygon.append(new_line)
             new_line = []

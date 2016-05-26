@@ -4,7 +4,7 @@ from PyQt4.QtGui import (QAction, QPushButton, QDialog, QIcon, QLabel,
     QMessageBox, QProgressBar)
 from qgis.core import (QGis, QgsDistanceArea, QgsGeometry, QgsMapLayer,
     QgsMapLayerRegistry, QgsMessageLog, QgsPoint, QgsVectorFileWriter,
-    QgsVectorLayer)
+    QgsVectorLayer, QgsProject)
 from qgis.gui import QgsFieldProxyModel, QgsMapLayerProxyModel, QgsMessageBar
 
 from cartogram_dialog import CartogramDialog
@@ -181,6 +181,7 @@ class Cartogram:
         worker.finished.connect(self.worker_finished)
         worker.error.connect(self.worker_error)
         worker.progress.connect(progress_bar.setValue)
+        worker.feedback.connect(self.worker_feedback)
         thread.started.connect(worker.run)
 
         thread.start()
@@ -194,6 +195,7 @@ class Cartogram:
         self.worker.deleteLater()
         self.thread.quit()
         self.thread.wait()
+        self.thread.terminate()
         self.thread.deleteLater()
 
         self.iface.messageBar().popWidget(self.message_bar)
@@ -203,6 +205,13 @@ class Cartogram:
 
         if layer is not None:
             QgsMapLayerRegistry.instance().addMapLayer(layer)
+            QgsVectorFileWriter.writeAsVectorFormat(
+                layer,
+                os.path.join(QgsProject.instance().homePath(),layer.name()+".shp"),
+                "utf-8", 
+                None, 
+                "ESRI Shapefile"
+            )
         else:
             if (exit_code == 1):
                 message = self.tr('Cartogram creation cancelled by user.')
@@ -226,6 +235,9 @@ class Cartogram:
         log = 'Worker thread exception: {}'.format(exception_string)
         QgsMessageLog.logMessage(log, level=QgsMessageLog.CRITICAL,
             tag='Plugins')
+
+    def worker_feedback(self,msg):
+        QgsMessageLog.logMessage(msg)
 
     def validate(self):
         """Make sure that all fields have valid values."""
@@ -306,7 +318,7 @@ class Cartogram:
         path = geometry_type + '?crs=' + crs_id + '&index=yes'
 
         # create the memory layer and get a reference to the data provider
-        memory_layer = QgsVectorLayer(path, 'Cartogram_{}'.format(inputField), 'memory')
+        memory_layer = QgsVectorLayer(path, 'cartogram_{}'.format(inputField), 'memory')
         memory_layer_data_provider = memory_layer.dataProvider()
 
         # copy all attributes from the source layer to the memory layer
