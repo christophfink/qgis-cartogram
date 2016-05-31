@@ -4,7 +4,7 @@ from PyQt4.QtGui import (QAction, QPushButton, QDialog, QIcon, QLabel,
     QMessageBox, QProgressBar)
 from qgis.core import (QGis, QgsDistanceArea, QgsGeometry, QgsMapLayer,
     QgsMapLayerRegistry, QgsMessageLog, QgsPoint, QgsVectorFileWriter,
-    QgsVectorLayer)
+    QgsVectorLayer, QgsProject)
 from qgis.gui import QgsFieldProxyModel, QgsMapLayerProxyModel, QgsMessageBar
 
 from cartogram_dialog import CartogramDialog
@@ -203,6 +203,13 @@ class Cartogram:
 
         if layer is not None:
             QgsMapLayerRegistry.instance().addMapLayer(layer)
+            QgsVectorFileWriter.writeAsVectorFormat(
+                layer,
+                os.path.join(QgsProject.instance().homePath(),layer.name()+".shp"),
+                "utf-8", 
+                None, 
+                "ESRI Shapefile"
+            )
         else:
             if (exit_code == 1):
                 message = self.tr('Cartogram creation cancelled by user.')
