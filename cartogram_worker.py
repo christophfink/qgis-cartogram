@@ -75,7 +75,7 @@ class CartogramWorker(QObject):
 
                 while True:
                     try:
-                        (featureId,new_geometry)=outQueue.get(True,20)
+                        (featureId,new_geometry)=outQueue.get(True,60)
                     except Queue.Empty:
                         break
 
