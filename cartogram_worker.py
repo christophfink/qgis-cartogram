@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from PyQt4.QtCore import pyqtSignal, QObject, QPyNullVariant
-from qgis.core import QgsDistanceArea, QgsGeometry, QgsPoint, QgsVectorFileWriter
+from qgis.core import QgsDistanceArea, QgsGeometry, QgsPoint, QgsVectorFileWriter, QgsMessageLog
 
 from cartogram_feature import CartogramFeature
 
@@ -20,8 +20,6 @@ class CartogramWorker(QObject):
     error = pyqtSignal(Exception, basestring)
     progress = pyqtSignal(float)
     feedback = pyqtSignal(unicode)
-
-    forces=[]
 
     def __init__(self, layer, field_name, iterations):
         """Constructor."""
@@ -197,6 +195,8 @@ class CartogramWorker(QObject):
         average_error = total_size_error / len(meta_features)
         force_reduction_factor = 1 / (average_error + 1)
 
+        QgsMessageLog.logMessage(str("Error (avg/total): {}/{}".format(average_error,total_size_error)))
+
         return (meta_features, force_reduction_factor)
 
     def transform(self, meta_features, force_reduction_factor, inQueue, outQueue):
@@ -239,19 +239,16 @@ class CartogramWorker(QObject):
                 x = x0 = point.x()
                 y = y0 = point.y()
 
-                if len(whitelist)==0:
-                    featureList=meta_features
-                else:
-                    featureList=whitelist
                 # compute the influence of all shapes on this point
-                for feature in featureList:
+                for feature in meta_features:
                     if feature.mass == 0:
                         continue 
                     cx = feature.center_x
                     cy = feature.center_y
-                    dX=x0-cx
-                    dY=y0-cy
-                    distance = math.sqrt(dX ** 2 + dY ** 2)
+                    #dX=x0-cx
+                    #dY=y0-cy
+                    #distance = math.sqrt(dX ** 2 + dY ** 2)
+                    distance = math.sqrt((x0 - cx) ** 2 + (y0 - cy) ** 2)
 
                     if (distance > feature.radius):
                         # calculate the force exerted on points far away from
@@ -264,12 +261,14 @@ class CartogramWorker(QObject):
                         # distance ** 2 / feature.radius ** 2 instead of xF
                         force = feature.mass * (xF ** 2) * (4 - (3 * xF))
                     force = force * force_reduction_factor / distance
-                    corrX=dX*force
-                    corrY=dY*force
-                    if sqrt(corrX**2 + corrY**2) > 0.1: # HUOM! that is assuming we’re dealing with meters here! does NOT work with geographic crs!
-                        x += corrX
-                        y += corrY
-                        whitelist.append(feature)
+                    x = (x0 - cx) * force + x
+                    y = (y0 - cy) * force + y
+                    #corrX=dX*force
+                    #corrY=dY*force
+                    #if sqrt(corrX**2 + corrY**2) > 0.1: # HUOM! that is assuming we’re dealing with meters here! does NOT work with geographic crs!
+                    #    x += corrX
+                    #    y += corrY
+                    #    whitelist.append(feature)
                 new_line.append(QgsPoint(x, y))
             new_polygon.append(new_line)
             new_line = []
